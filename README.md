@@ -200,9 +200,17 @@ When an OpenAI API key is configured, the system can:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OPENAI_API_KEY` | OpenAI API key | None |
-| `LLM_API_KEY` | Alternative API key env var | None |
-| `LLM_MODEL` | Model to use | `gpt-4o-mini` |
+| `OPENROUTER_API_KEY` | OpenRouter API key ([get one](https://openrouter.ai/keys)) | None |
+| `OPENAI_API_KEY` | Fallback OpenAI API key | None |
+| `LLM_MODEL` | Model to use | `google/gemini-2.0-flash-001` |
+
+### Quick Setup
+
+```bash
+cd server
+cp .env.example .env
+# Edit .env with your OpenRouter API key
+```
 
 ---
 

@@ -7,6 +7,7 @@ from core.engine_ppt import PPTEngine
 from core.llm import llm_service
 import uuid
 import os
+import re
 
 router = APIRouter()
 
@@ -116,7 +117,6 @@ async def _generate_excel(doc_id: str, structure: dict, fallback_title: str) -> 
     formulas = structure.get('formulas', {})
     for cell_ref, formula in formulas.items():
         # Parse cell reference like "B7" -> row=7, col=2
-        import re
         match = re.match(r'([A-Z]+)(\d+)', cell_ref.upper())
         if match:
             col = sum((ord(c) - ord('A') + 1) * (26 ** i) for i, c in enumerate(reversed(match.group(1))))
@@ -161,8 +161,23 @@ async def _generate_ppt(doc_id: str, structure: dict, fallback_title: str) -> st
 @router.get("/download/{filename}")
 async def download_file(filename: str):
     """Download a generated file."""
+    # Security: validate filename to prevent path traversal
+    if not filename or "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    # Only allow expected file extensions
+    allowed_extensions = (".docx", ".xlsx", ".pptx")
+    if not filename.lower().endswith(allowed_extensions):
+        raise HTTPException(status_code=400, detail="Invalid file type")
+    
     filepath = os.path.join(OUTPUT_DIR, filename)
+    
+    # Verify the resolved path is within OUTPUT_DIR
+    if not os.path.realpath(filepath).startswith(os.path.realpath(OUTPUT_DIR)):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="File not found")
+    
     return FileResponse(filepath, filename=filename)
 

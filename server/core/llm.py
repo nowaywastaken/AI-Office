@@ -1,8 +1,13 @@
 import os
 import json
 import re
+import logging
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
+
+# Configure logging to avoid leaking sensitive info
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class DocumentSection(BaseModel):
@@ -42,16 +47,23 @@ class LLMService:
     """
     
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
-        self.model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        self.api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.model = os.getenv("LLM_MODEL", "google/gemini-2.0-flash-001")
         self.client = None
         
         if self.api_key:
             try:
                 from openai import OpenAI
-                self.client = OpenAI(api_key=self.api_key)
+                self.client = OpenAI(
+                    api_key=self.api_key,
+                    base_url="https://openrouter.ai/api/v1",
+                    default_headers={
+                        "HTTP-Referer": "http://localhost:5173",
+                        "X-Title": "AI Office Suite"
+                    }
+                )
             except ImportError:
-                print("OpenAI package not installed. Using mock generation.")
+                logger.warning("OpenAI package not installed. Using mock generation.")
     
     async def generate_document_structure(
         self,
@@ -110,7 +122,7 @@ Respond ONLY with valid JSON, no markdown."""
                 )
                 return json.loads(response.choices[0].message.content)
             except Exception as e:
-                print(f"LLM Error: {e}")
+                logger.error("LLM generation failed", exc_info=False)
                 return self._mock_word_structure(user_prompt)
         else:
             return self._mock_word_structure(user_prompt)
@@ -140,7 +152,7 @@ Respond ONLY with valid JSON, no markdown."""
                 )
                 return json.loads(response.choices[0].message.content)
             except Exception as e:
-                print(f"LLM Error: {e}")
+                logger.error("LLM generation failed", exc_info=False)
                 return self._mock_excel_structure(user_prompt)
         else:
             return self._mock_excel_structure(user_prompt)
@@ -173,7 +185,7 @@ Respond ONLY with valid JSON, no markdown."""
                 )
                 return json.loads(response.choices[0].message.content)
             except Exception as e:
-                print(f"LLM Error: {e}")
+                logger.error("LLM generation failed", exc_info=False)
                 return self._mock_ppt_structure(user_prompt)
         else:
             return self._mock_ppt_structure(user_prompt)

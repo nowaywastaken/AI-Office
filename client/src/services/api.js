@@ -1,4 +1,5 @@
 const API_BASE_URL = 'http://localhost:8000/api';
+export const API_HOST = 'http://localhost:8000';
 
 export const api = {
   async getStatus() {
@@ -15,7 +16,10 @@ export const api = {
       },
       body: JSON.stringify({ type, title, content }),
     });
-    if (!response.ok) throw new Error('Generation Failed');
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || 'Generation Failed');
+    }
     return response.json();
   }
 };

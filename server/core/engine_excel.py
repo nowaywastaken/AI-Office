@@ -147,8 +147,8 @@ class ExcelEngine:
                 try:
                     if len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
-                except:
-                    pass
+                except (TypeError, AttributeError):
+                    continue  # Skip cells with non-stringifiable values
             adjusted_width = min(max(max_length + 2, min_width), max_width)
             self.ws.column_dimensions[column_letter].width = adjusted_width
         return self

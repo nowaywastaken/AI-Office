@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Literal
 
 class FontStyle(BaseModel):
     name: Optional[str] = Field(None, description="Font family name (e.g., 'Arial', 'Times New Roman')")
@@ -15,10 +15,10 @@ class ParagraphStyle(BaseModel):
     space_after: Optional[float] = Field(None, description="Spacing after paragraph in points")
 
 class DocumentRequest(BaseModel):
-    title: str = "Presentation"
-    content: str = Field(..., description="Natural language description of the document or raw content")
-    type: str = Field(..., description="'word', 'excel', 'ppt'")
-    style_guide: Optional[str] = Field(None, description="Description of the desired style")
+    title: str = Field(default="Document", min_length=1, max_length=200)
+    content: str = Field(..., description="Natural language description of the document or raw content", min_length=1, max_length=50000)
+    type: Literal["word", "excel", "ppt"] = Field(..., description="Document type")
+    style_guide: Optional[str] = Field(None, description="Description of the desired style", max_length=2000)
 
 class GenerationResponse(BaseModel):
     file_url: str
