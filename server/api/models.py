@@ -14,11 +14,18 @@ class ParagraphStyle(BaseModel):
     space_before: Optional[float] = Field(None, description="Spacing before paragraph in points")
     space_after: Optional[float] = Field(None, description="Spacing after paragraph in points")
 
+class AIConfig(BaseModel):
+    provider: Optional[str] = Field(None, description="AI provider (e.g., 'openai', 'anthropic')")
+    api_key: Optional[str] = Field(None, description="API key")
+    base_url: Optional[str] = Field(None, description="Base URL for the API")
+    model: Optional[str] = Field(None, description="Model name")
+
 class DocumentRequest(BaseModel):
     title: str = Field(default="Document", min_length=1, max_length=200)
     content: str = Field(..., description="Natural language description of the document or raw content", min_length=1, max_length=50000)
     type: Literal["word", "excel", "ppt"] = Field(..., description="Document type")
     style_guide: Optional[str] = Field(None, description="Description of the desired style", max_length=2000)
+    api_config: Optional[AIConfig] = Field(None, description="Custom AI configuration")
 
 class GenerationResponse(BaseModel):
     file_url: str

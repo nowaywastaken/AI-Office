@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { api, API_HOST } from '../services/api';
+import SettingsModal from './SettingsModal';
 
 export default function ChatInterface({ onGenerate }) {
   const [message, setMessage] = useState('');
   const [docType, setDocType] = useState('word');
   const [isLoading, setIsLoading] = useState(false);
   const [history, setHistory] = useState([]);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -25,7 +27,11 @@ export default function ChatInterface({ onGenerate }) {
     setMessage('');
 
     try {
-      const result = await api.generateDocument(docType, 'Generated Document', message);
+      // Get AI config from localStorage
+      const savedConfig = localStorage.getItem('ai_office_config');
+      const aiConfig = savedConfig ? JSON.parse(savedConfig) : null;
+      
+      const result = await api.generateDocument(docType, 'Generated Document', message, aiConfig);
       setHistory(prev => [...prev, { role: 'assistant', content: result.message, fileUrl: result.file_url }]);
       if (onGenerate) onGenerate(result);
     } catch (error) {
@@ -43,10 +49,17 @@ export default function ChatInterface({ onGenerate }) {
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center text-white font-bold shadow-lg shadow-brand-500/20">
             AI
           </div>
-          <div>
+          <div className="flex-1">
             <h1 className="text-lg font-semibold text-white tracking-wide font-display">Office Suite</h1>
             <p className="text-surface-400 text-xs font-medium">Auto-generate professional documents</p>
           </div>
+          <button 
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-surface-400 hover:text-white transition-all border border-white/5"
+            title="AI Settings"
+          >
+            ⚙️
+          </button>
         </div>
       </div>
 
@@ -173,6 +186,11 @@ export default function ChatInterface({ onGenerate }) {
           </div>
         </form>
       </div>
+
+      <SettingsModal 
+        isOpen={isSettingsOpen} 
+        onClose={() => setIsSettingsOpen(false)} 
+      />
     </div>
   );
 }

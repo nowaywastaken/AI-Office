@@ -33,7 +33,8 @@ async def generate_document(request: DocumentRequest):
         structure = await llm_service.generate_document_structure(
             user_prompt=request.content,
             doc_type=request.type,
-            style_guide=request.style_guide
+            style_guide=request.style_guide,
+            config=request.api_config.dict() if request.api_config else None
         )
         
         if request.type == 'word':

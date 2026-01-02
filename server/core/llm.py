@@ -69,7 +69,8 @@ class LLMService:
         self,
         user_prompt: str,
         doc_type: str,
-        style_guide: Optional[str] = None
+        style_guide: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Generate structured document content from natural language.
@@ -78,23 +79,49 @@ class LLMService:
             user_prompt: User's description of what they want
             doc_type: 'word', 'excel', or 'ppt'
             style_guide: Optional style preferences
+            config: Optional dynamic configuration (api_key, base_url, model)
             
         Returns:
             Structured document data ready for engine processing
         """
+        # Create a client for this request if config is provided
+        client = self.client
+        model = self.model
+        
+        if config:
+            api_key = config.get("api_key") or self.api_key
+            base_url = config.get("base_url") or "https://openrouter.ai/api/v1"
+            model = config.get("model") or self.model
+            
+            if api_key:
+                try:
+                    from openai import OpenAI
+                    client = OpenAI(
+                        api_key=api_key,
+                        base_url=base_url,
+                        default_headers={
+                            "HTTP-Referer": "http://localhost:5173",
+                            "X-Title": "AI Office Suite"
+                        }
+                    )
+                except ImportError:
+                    logger.warning("OpenAI package not installed. Using mock generation.")
+
         if doc_type == 'word':
-            return await self._generate_word_structure(user_prompt, style_guide)
+            return await self._generate_word_structure(user_prompt, style_guide, client, model)
         elif doc_type == 'excel':
-            return await self._generate_excel_structure(user_prompt)
+            return await self._generate_excel_structure(user_prompt, client, model)
         elif doc_type == 'ppt':
-            return await self._generate_ppt_structure(user_prompt)
+            return await self._generate_ppt_structure(user_prompt, client, model)
         else:
             raise ValueError(f"Unknown document type: {doc_type}")
     
     async def _generate_word_structure(
         self,
         user_prompt: str,
-        style_guide: Optional[str] = None
+        style_guide: Optional[str] = None,
+        client: Any = None,
+        model: str = None
     ) -> Dict[str, Any]:
         """Generate Word document structure."""
         
@@ -110,10 +137,10 @@ Output a JSON object with:
 Parse any style requirements from the user's request (e.g., "12pt font", "1.5 line spacing", "Times New Roman").
 Respond ONLY with valid JSON, no markdown."""
 
-        if self.client:
+        if client:
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
+                response = client.chat.completions.create(
+                    model=model or self.model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
@@ -127,7 +154,7 @@ Respond ONLY with valid JSON, no markdown."""
         else:
             return self._mock_word_structure(user_prompt)
     
-    async def _generate_excel_structure(self, user_prompt: str) -> Dict[str, Any]:
+    async def _generate_excel_structure(self, user_prompt: str, client: Any = None, model: str = None) -> Dict[str, Any]:
         """Generate Excel spreadsheet structure."""
         
         system_prompt = """You are a data analyst. Generate structured spreadsheet data based on the user's request.
@@ -140,10 +167,10 @@ Output a JSON object with:
 Generate realistic sample data if specific data is not provided.
 Respond ONLY with valid JSON, no markdown."""
 
-        if self.client:
+        if client:
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
+                response = client.chat.completions.create(
+                    model=model or self.model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
@@ -157,7 +184,7 @@ Respond ONLY with valid JSON, no markdown."""
         else:
             return self._mock_excel_structure(user_prompt)
     
-    async def _generate_ppt_structure(self, user_prompt: str) -> Dict[str, Any]:
+    async def _generate_ppt_structure(self, user_prompt: str, client: Any = None, model: str = None) -> Dict[str, Any]:
         """Generate PowerPoint presentation structure."""
         
         system_prompt = """You are a presentation designer. Generate a structured presentation based on the user's request.
@@ -173,10 +200,10 @@ Output a JSON object with:
 Create 5-10 slides for a comprehensive presentation.
 Respond ONLY with valid JSON, no markdown."""
 
-        if self.client:
+        if client:
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
+                response = client.chat.completions.create(
+                    model=model or self.model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
