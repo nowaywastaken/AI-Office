@@ -71,14 +71,14 @@ ai-office-suite/
 cd server
 
 # Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+python3 -m venv venv
+source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 
 # Set API key (optional)
-export OPENAI_API_KEY="your-api-key"  # Windows: set OPENAI_API_KEY=...
+export OPENAI_API_KEY="your-api-key"
 
 # Start server
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
@@ -87,6 +87,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ### 2️⃣ Frontend Setup
 
 ```bash
+# Open a new terminal tab/window
 cd client
 
 # Install dependencies

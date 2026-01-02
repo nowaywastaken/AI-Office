@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from server.api.models import DocumentRequest, GenerationResponse
-from server.core.engine_word import WordEngine
-from server.core.engine_excel import ExcelEngine
-from server.core.engine_ppt import PPTEngine
-from server.core.llm import llm_service
+from api.models import DocumentRequest, GenerationResponse
+from core.engine_word import WordEngine
+from core.engine_excel import ExcelEngine
+from core.engine_ppt import PPTEngine
+from core.llm import llm_service
 import uuid
 import os
 
