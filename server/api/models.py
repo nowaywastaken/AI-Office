@@ -26,6 +26,7 @@ class DocumentRequest(BaseModel):
     type: Optional[Literal["word", "excel", "ppt"]] = Field(None, description="Document type (auto-detected if not provided)")
     style_guide: Optional[str] = Field(None, description="Description of the desired style", max_length=2000)
     api_config: Optional[AIConfig] = Field(None, description="Custom AI configuration")
+    raw_structure: Optional[Dict[str, Any]] = Field(None, description="Pre-parsed document structure to skip LLM step")
 
 class GenerationResponse(BaseModel):
     file_url: str

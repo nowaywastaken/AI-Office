@@ -81,20 +81,73 @@ export default function DocumentPreview({ result, liveDraft }) {
   // Handle live streaming preview
   if (liveDraft && !result) {
     return (
-      <div className="h-full flex flex-col p-8 animate-fade-in relative overflow-hidden bg-surface-950/30">
-        <div className="flex items-center gap-3 mb-6 p-4 bg-brand-500/10 border border-brand-500/20 rounded-2xl">
-          <Zap className="text-brand-400 animate-pulse" size={20} />
-          <div>
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">正在生成实时草稿...</h3>
-            <p className="text-[10px] text-surface-400">AI 正在努力创作中，完成后将自动转换为专业 Office 格式</p>
+      <div className="h-full flex flex-col p-6 md:p-10 animate-fade-in relative overflow-hidden bg-surface-950">
+        {/* Abstract Background Elements */}
+        <div className="absolute top-0 right-0 w-96 h-96 bg-brand-500/10 blur-[120px] rounded-full -translate-y-1/2 translate-x-1/2"></div>
+        <div className="absolute bottom-0 left-0 w-64 h-64 bg-surface-800/20 blur-[100px] rounded-full translate-y-1/2 -translate-x-1/2"></div>
+
+        {/* Status Header */}
+        <div className="relative z-10 flex items-center justify-between mb-8">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-brand-500/20 flex items-center justify-center border border-brand-500/30 shadow-lg shadow-brand-500/10">
+              <Zap className="text-brand-400 animate-pulse" size={24} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-white tracking-tight">智能创作中</h3>
+              <div className="flex items-center gap-2 text-xs text-surface-400">
+                <span className="flex h-1.5 w-1.5 rounded-full bg-brand-400 animate-ping"></span>
+                AI 正在构建专业文档结构...
+              </div>
+            </div>
+          </div>
+          <div className="hidden md:flex items-center gap-3 px-4 py-2 bg-surface-900/50 border border-white/5 rounded-full backdrop-blur-md">
+            <div className="w-40 h-1.5 bg-surface-800 rounded-full overflow-hidden">
+               <div className="h-full bg-gradient-to-r from-brand-600 to-brand-400 w-[60%] animate-shimmer"></div>
+            </div>
+            <span className="text-[10px] font-bold text-surface-500 uppercase tracking-widest">Drafting</span>
           </div>
         </div>
-        <div className="flex-1 bg-white shadow-2xl rounded-sm p-12 overflow-auto custom-scrollbar prose prose-slate max-w-3xl mx-auto w-full prose-headings:text-surface-900 prose-p:text-surface-700">
-           <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-            {liveDraft}
-          </ReactMarkdown>
-          <div className="w-1 h-5 bg-brand-500 animate-pulse inline-block align-middle ml-1" />
+
+        {/* Paper Container */}
+        <div className="flex-1 relative z-10 w-full max-w-4xl mx-auto flex flex-col group/paper">
+          <div className="absolute inset-0 bg-white/5 backdrop-blur-[2px] rounded-xl -rotate-1 translate-y-2 opacity-50"></div>
+          <div className="absolute inset-0 bg-white/10 backdrop-blur-[2px] rounded-xl rotate-1 -translate-y-1 opacity-50"></div>
+          
+          <div className="flex-1 bg-white shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] rounded-sm p-12 md:p-20 overflow-auto custom-scrollbar-paper relative">
+             {/* Paper Texture Overlay */}
+             <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')]"></div>
+             
+             <div className="prose prose-slate max-w-none prose-headings:font-serif prose-headings:text-surface-900 prose-p:text-surface-600 prose-p:leading-relaxed prose-p:text-lg prose-headings:tracking-tight prose-hr:border-surface-100">
+               <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                {liveDraft}
+              </ReactMarkdown>
+              <span className="inline-block w-2 h-6 bg-brand-500 ml-1 animate-pulse align-middle rounded-full shadow-lg shadow-brand-500/50" />
+             </div>
+          </div>
         </div>
+        
+        <style dangerouslySetInnerHTML={{ __html: `
+          @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(200%); }
+          }
+          .animate-shimmer {
+            animation: shimmer 2s infinite linear;
+          }
+          .custom-scrollbar-paper::-webkit-scrollbar {
+            width: 6px;
+          }
+          .custom-scrollbar-paper::-webkit-scrollbar-track {
+            background: transparent;
+          }
+          .custom-scrollbar-paper::-webkit-scrollbar-thumb {
+            background: rgba(0,0,0,0.05);
+            border-radius: 10px;
+          }
+          .custom-scrollbar-paper::-webkit-scrollbar-thumb:hover {
+            background: rgba(0,0,0,0.1);
+          }
+        `}} />
       </div>
     );
   }

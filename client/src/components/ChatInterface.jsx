@@ -210,7 +210,6 @@ export default function ChatInterface({ onGenerate }) {
              const parts = chunk.split('<STRUCTURE>');
              fullStreamContent += parts[0];
              structureString += parts[1] || '';
-             // Stop updating the draft once we hit structure
              if (onGenerate) onGenerate(fullStreamContent);
           } else if (chunk.includes('</STRUCTURE>')) {
              const parts = chunk.split('</STRUCTURE>');
@@ -225,15 +224,25 @@ export default function ChatInterface({ onGenerate }) {
         }
       );
 
-      // Now we have the structure, generate the final document
-      // We call the standard generateDocument but with the structure if we could parse it,
-      // or we just let it generate normally but now it's "finished".
-      // To keep it simple and robust, we'll use the original generateDocument but it will now return structure.
+      let parsedStructure = null;
+      try {
+        if (structureString) {
+          // Clean up potential markdown noise around JSON
+          const cleanJson = structureString.replace(/```json|```/g, '').trim();
+          parsedStructure = JSON.parse(cleanJson);
+        }
+      } catch (e) {
+        console.error('Failed to parse structure from stream:', e);
+      }
+
+      // Now we have the structure (hopefully), generate the final document
+      // We pass the parsedStructure as raw_structure to the backend to skip LLM
       const result = await api.generateDocument(
         pendingGeneration.type,
         'Generated Document',
         fullPrompt,
-        aiConfig
+        aiConfig,
+        parsedStructure // new argument for raw_structure
       );
       
       setHistory(prev => [...prev, { 

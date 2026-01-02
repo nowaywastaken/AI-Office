@@ -46,6 +46,23 @@ async def generate_document(request: DocumentRequest):
         
         result = None
         
+        # Fast-track: If structure is already provided (e.g. from stream), use it directly
+        if request.raw_structure:
+            from core.tools import word_tool, excel_tool, ppt_tool
+            doc_id = str(uuid.uuid4())
+            if doc_type == 'word':
+                filepath = await word_tool._generate_file(doc_id, request.raw_structure, request.raw_structure.get('title', 'Generated'))
+            elif doc_type == 'excel':
+                filepath = await excel_tool._generate_file(doc_id, request.raw_structure, request.raw_structure.get('title', 'Generated'))
+            elif doc_type == 'ppt':
+                filepath = await ppt_tool._generate_file(doc_id, request.raw_structure, request.raw_structure.get('title', 'Generated'))
+            
+            return GenerationResponse(
+                file_url=f"/api/download/{os.path.basename(filepath)}",
+                message="Document generated instantly from draft structure",
+                structure=request.raw_structure
+            )
+
         if doc_type == 'word':
             result = await word_tool.run(
                 prompt=request.content,

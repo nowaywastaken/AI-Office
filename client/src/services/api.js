@@ -87,21 +87,20 @@ export const api = {
   },
 
 
-  async generateDocument(type, title, content, apiConfig = null) {
+  async generateDocument(type, title, content, apiConfig, rawStructure) {
     const response = await fetch(`${API_BASE_URL}/generate`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
-        type: type || null,  // null = auto-detect
+        type, 
         title, 
         content,
         api_config: apiConfig ? {
           api_key: apiConfig.apiKey,
           base_url: apiConfig.baseUrl,
           model: apiConfig.model
-        } : null
+        } : null,
+        raw_structure: rawStructure || null
       }),
     });
     if (!response.ok) {
@@ -153,7 +152,13 @@ export const api = {
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        if (partialLine && partialLine.startsWith('data: ')) {
+           const data = partialLine.slice(6);
+           if (data) onChunk(data);
+        }
+        break;
+      }
       const chunk = decoder.decode(value, { stream: true });
       const lines = (partialLine + chunk).split('\n');
       partialLine = lines.pop();
