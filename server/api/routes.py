@@ -1,10 +1,14 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
-from api.models import DocumentRequest, GenerationResponse
-from core.engine_word import WordEngine
-from core.engine_excel import ExcelEngine
-from core.engine_ppt import PPTEngine
+from sse_starlette.sse import EventSourceResponse
+from api.models import (
+    DocumentRequest, 
+    GenerationResponse, 
+    StreamGenerationRequest, 
+    ModificationRequest
+)
 from core.llm import llm_service
+import json
 import uuid
 import os
 import re
@@ -26,137 +30,133 @@ async def get_status():
 @router.post("/generate", response_model=GenerationResponse)
 async def generate_document(request: DocumentRequest):
     """Generate a document based on user request using AI."""
-    doc_id = str(uuid.uuid4())
+    
+    # Import tools here to avoid circular dependencies if any, 
+    # though core.tools imports core.llm which is fine.
+    from core.tools import word_tool, excel_tool, ppt_tool
     
     try:
-        # Generate structured content using AI
-        structure = await llm_service.generate_document_structure(
-            user_prompt=request.content,
-            doc_type=request.type,
-            style_guide=request.style_guide,
-            config=request.api_config.dict() if request.api_config else None
-        )
+        # Auto-detect document type if not provided
+        doc_type = request.type
+        if not doc_type:
+            doc_type = await llm_service.detect_document_type(
+                user_prompt=request.content,
+                config=request.api_config.dict() if request.api_config else None
+            )
         
-        if request.type == 'word':
-            filepath = await _generate_word(doc_id, structure, request.title)
-        elif request.type == 'excel':
-            filepath = await _generate_excel(doc_id, structure, request.title)
-        elif request.type == 'ppt':
-            filepath = await _generate_ppt(doc_id, structure, request.title)
+        result = None
+        
+        if doc_type == 'word':
+            result = await word_tool.run(
+                prompt=request.content,
+                title=request.title,
+                style_guide=request.style_guide,
+                api_config=request.api_config.dict() if request.api_config else None
+            )
+        elif doc_type == 'excel':
+            result = await excel_tool.run(
+                prompt=request.content,
+                title=request.title,
+                api_config=request.api_config.dict() if request.api_config else None
+            )
+        elif doc_type == 'ppt':
+            result = await ppt_tool.run(
+                prompt=request.content,
+                title=request.title,
+                api_config=request.api_config.dict() if request.api_config else None
+            )
         else:
-            raise HTTPException(status_code=400, detail=f"Unknown document type: {request.type}")
+            raise HTTPException(status_code=400, detail=f"Unknown document type: {doc_type}")
         
-        # Determine correct file extension
-        ext_map = {'word': 'docx', 'excel': 'xlsx', 'ppt': 'pptx'}
-        ext = ext_map.get(request.type, request.type)
-        
+        if not result.success:
+             raise Exception(result.error or "Unknown error during generation")
+
         return GenerationResponse(
-            file_url=f"/api/download/{doc_id}.{ext}",
-            message=f"Successfully generated {request.type.upper()} document: {structure.get('title', request.title)}"
+            file_url=result.data.get("file_url"),
+            message=result.message,
+            structure=result.data.get("structure")
         )
+            
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-async def _generate_word(doc_id: str, structure: dict, fallback_title: str) -> str:
-    """Generate Word document from structured data."""
-    engine = WordEngine()
-    
-    # Apply style guide if present
-    style = structure.get('style_guide', {})
-    if style:
-        margin = style.get('margin', 2.54)
-        engine.set_page_margins(top=margin, bottom=margin, left=margin, right=margin)
-    else:
-        engine.set_page_margins(top=2.54, bottom=2.54, left=3.18, right=3.18)
-    
-    # Add title
-    title = structure.get('title', fallback_title)
-    engine.add_heading(title, level=1)
-    
-    # Add sections
-    for section in structure.get('sections', []):
-        if section.get('heading'):
-            engine.add_heading(
-                section['heading'],
-                level=section.get('level', 2)
+@router.post("/generate/stream")
+async def generate_document_stream(request: StreamGenerationRequest, fast_request: Request):
+    """Stream doc content and structure."""
+    try:
+        doc_type = request.type
+        if not doc_type:
+            doc_type = await llm_service.detect_document_type(
+                user_prompt=request.prompt,
+                config=request.api_config.dict() if request.api_config else None
             )
+
+        async def event_generator():
+            async for chunk in llm_service.generate_document_structure_stream(
+                user_prompt=request.prompt,
+                doc_type=doc_type,
+                config=request.api_config.dict() if request.api_config else None,
+                context=request.context
+            ):
+                if await fast_request.is_disconnected():
+                    break
+                yield {"data": chunk}
+
+        return EventSourceResponse(event_generator())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/modify", response_model=GenerationResponse)
+async def modify_document(request: ModificationRequest):
+    """Iteratively modify an existing document structure."""
+    from core.tools import word_tool, excel_tool, ppt_tool
+    
+    try:
+        # 1. Update structure via LLM
+        # We pass the current structure as context
+        context = [
+            {"role": "assistant", "content": f"Current structure: {json.dumps(request.current_structure)}"}
+        ]
         
-        # Apply formatting from style guide
-        engine.add_paragraph(
-            section.get('content', ''),
-            font_name=style.get('font_name', 'Arial'),
-            font_size=style.get('font_size', 12),
-            line_spacing=style.get('line_spacing', 1.5),
-            line_spacing_rule='multiple',
-            space_after=12
+        new_structure = await llm_service.generate_document_structure(
+            user_prompt=request.instruction,
+            doc_type=request.doc_type,
+            config=request.api_config.dict() if request.api_config else None,
+            context=context
         )
-    
-    filepath = os.path.join(OUTPUT_DIR, f"{doc_id}.docx")
-    engine.save(filepath)
-    return filepath
-
-
-async def _generate_excel(doc_id: str, structure: dict, fallback_title: str) -> str:
-    """Generate Excel document from structured data."""
-    engine = ExcelEngine()
-    
-    title = structure.get('title', fallback_title)
-    engine.set_sheet_name(title[:31])  # Excel sheet name limit
-    
-    # Add headers
-    headers = structure.get('headers', [])
-    if headers:
-        engine.set_row_data(1, headers, header=True)
-    
-    # Add data rows
-    rows = structure.get('rows', [])
-    for i, row in enumerate(rows):
-        engine.set_row_data(i + 2, row)
-    
-    # Add formulas
-    formulas = structure.get('formulas', {})
-    for cell_ref, formula in formulas.items():
-        # Parse cell reference like "B7" -> row=7, col=2
-        match = re.match(r'([A-Z]+)(\d+)', cell_ref.upper())
-        if match:
-            col = sum((ord(c) - ord('A') + 1) * (26 ** i) for i, c in enumerate(reversed(match.group(1))))
-            row = int(match.group(2))
-            engine.set_formula(row, col, formula)
-    
-    # Auto-fit and add borders
-    engine.auto_fit_columns()
-    if headers and rows:
-        engine.add_borders(1, 1, len(rows) + 1, len(headers))
-    
-    filepath = os.path.join(OUTPUT_DIR, f"{doc_id}.xlsx")
-    engine.save(filepath)
-    return filepath
-
-
-async def _generate_ppt(doc_id: str, structure: dict, fallback_title: str) -> str:
-    """Generate PowerPoint from structured data."""
-    engine = PPTEngine()
-    
-    title = structure.get('title', fallback_title)
-    subtitle = structure.get('subtitle', 'Generated by AI Office Suite')
-    
-    # Add title slide
-    engine.add_title_slide(title, subtitle)
-    
-    # Add content slides
-    for slide_data in structure.get('slides', [])[1:]:  # Skip first if it's title
-        slide_title = slide_data.get('title', 'Slide')
-        content = slide_data.get('content', [])
         
-        if slide_data.get('type') == 'title':
-            engine.add_title_slide(slide_title, content[0] if content else '')
-        else:
-            engine.add_content_slide(slide_title, content if isinstance(content, list) else [content])
-    
-    filepath = os.path.join(OUTPUT_DIR, f"{doc_id}.pptx")
-    engine.save(filepath)
-    return filepath
+        # 2. Re-generate File
+        doc_id = str(uuid.uuid4())
+        result = None
+        
+        if request.doc_type == 'word':
+            filepath = await word_tool._generate_file(doc_id, new_structure, new_structure.get('title', 'Modified'))
+            result_data = {
+                "file_url": f"/api/download/{os.path.basename(filepath)}",
+                "structure": new_structure
+            }
+        elif request.doc_type == 'excel':
+            filepath = await excel_tool._generate_file(doc_id, new_structure, new_structure.get('title', 'Modified'))
+            result_data = {
+                "file_url": f"/api/download/{os.path.basename(filepath)}",
+                "structure": new_structure
+            }
+        elif request.doc_type == 'ppt':
+            filepath = await ppt_tool._generate_file(doc_id, new_structure, new_structure.get('title', 'Modified'))
+            result_data = {
+                "file_url": f"/api/download/{os.path.basename(filepath)}",
+                "structure": new_structure
+            }
+        
+        return GenerationResponse(
+            file_url=result_data["file_url"],
+            message="Document updated successfully",
+            structure=new_structure
+        )
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.get("/download/{filename}")

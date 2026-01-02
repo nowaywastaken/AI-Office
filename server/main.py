@@ -1,3 +1,12 @@
+import os
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
+# Clean up conflicting proxy variants from shell environment
+for key in ["all_proxy", "http_proxy", "https_proxy", "ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY"]:
+    if key in os.environ:
+        del os.environ[key]
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -18,8 +27,13 @@ app.add_middleware(
 )
 
 from api.routes import router as api_router
+from api.chat import router as chat_router
+from api.preview import router as preview_router
 
 app.include_router(api_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
+app.include_router(preview_router, prefix="/api")
+
 
 @app.get("/")
 async def root():

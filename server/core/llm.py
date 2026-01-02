@@ -5,7 +5,7 @@ import logging
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 
-# Configure logging to avoid leaking sensitive info
+# Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -53,8 +53,8 @@ class LLMService:
         
         if self.api_key:
             try:
-                from openai import OpenAI
-                self.client = OpenAI(
+                from openai import AsyncOpenAI
+                self.client = AsyncOpenAI(
                     api_key=self.api_key,
                     base_url="https://openrouter.ai/api/v1",
                     default_headers={
@@ -63,287 +63,365 @@ class LLMService:
                     }
                 )
             except ImportError:
-                logger.warning("OpenAI package not installed. Using mock generation.")
+                logger.error("OpenAI package not installed. Please install it using: pip install openai")
+                raise ImportError("OpenAI package missing")
+
+        else:
+            logger.warning("No API key found. AI features will fail until OPENROUTER_API_KEY is set in .env")
+    
+    async def detect_document_type(
+        self,
+        user_prompt: str,
+        config: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Detect the optimal document type based on user's prompt.
+        
+        Returns: 'word', 'excel', or 'ppt'
+        """
+        client = self._get_client(config)
+        model = self._get_model(config)
+        
+        system_prompt = """You are a document type classifier. Based on the user's request, determine the most appropriate document type.
+
+Rules:
+- "word": For text-heavy documents like reports, letters, essays, meeting notes, proposals, contracts, articles
+- "excel": For data, numbers, calculations, budgets, lists, tables, schedules, tracking, inventory
+- "ppt": For presentations, slides, pitch decks, training materials, visual storytelling
+
+Respond with ONLY a JSON object: {"type": "word"} or {"type": "excel"} or {"type": "ppt"}
+No other text."""
+
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format={"type": "json_object"}
+            )
+            content = response.choices[0].message.content
+            result = json.loads(content)
+            detected_type = result.get("type")
+            
+            if detected_type in ["word", "excel", "ppt"]:
+                return detected_type
+            
+            # If JSON parsing worked but value is unexpected, default to word but log warning
+            logger.warning(f"Unexpected document type detected: {detected_type}, defaulting to word")
+            return "word"
+            
+        except Exception as e:
+            logger.error(f"Document type detection failed: {str(e)}")
+            raise Exception(f"AI Detection failed: {str(e)}. Please check your API key.")
+
     
     async def generate_document_structure(
         self,
         user_prompt: str,
         doc_type: str,
         style_guide: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None,
+        context: Optional[List[Dict[str, str]]] = None # Context for modifications
     ) -> Dict[str, Any]:
         """
         Generate structured document content from natural language.
-        
-        Args:
-            user_prompt: User's description of what they want
-            doc_type: 'word', 'excel', or 'ppt'
-            style_guide: Optional style preferences
-            config: Optional dynamic configuration (api_key, base_url, model)
-            
-        Returns:
-            Structured document data ready for engine processing
         """
-        # Create a client for this request if config is provided
-        client = self.client
-        model = self.model
+        client = await self._get_client(config)
+        model = self._get_model(config)
         
-        if config:
-            api_key = config.get("api_key") or self.api_key
-            base_url = config.get("base_url") or "https://openrouter.ai/api/v1"
-            model = config.get("model") or self.model
-            
-            if api_key:
-                try:
-                    from openai import OpenAI
-                    client = OpenAI(
-                        api_key=api_key,
-                        base_url=base_url,
-                        default_headers={
-                            "HTTP-Referer": "http://localhost:5173",
-                            "X-Title": "AI Office Suite"
-                        }
-                    )
-                except ImportError:
-                    logger.warning("OpenAI package not installed. Using mock generation.")
-
         if doc_type == 'word':
-            return await self._generate_word_structure(user_prompt, style_guide, client, model)
+            return await self._generate_word_structure(user_prompt, style_guide, client, model, context)
         elif doc_type == 'excel':
-            return await self._generate_excel_structure(user_prompt, client, model)
+            return await self._generate_excel_structure(user_prompt, client, model, context)
         elif doc_type == 'ppt':
-            return await self._generate_ppt_structure(user_prompt, client, model)
+            return await self._generate_ppt_structure(user_prompt, client, model, context)
         else:
             raise ValueError(f"Unknown document type: {doc_type}")
+
+    async def generate_document_structure_stream(
+        self,
+        user_prompt: str,
+        doc_type: str,
+        style_guide: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        context: Optional[List[Dict[str, str]]] = None
+    ):
+        """
+        Stream Markdown-formatted content for real-time preview, 
+        while eventually yielding the final JSON structure for the document engine.
+        """
+        client = await self._get_client(config)
+        model = self._get_model(config)
+
+        # Decide which prompt to use based on type
+        if doc_type == 'word':
+            system_prompt = """You are a professional document writer. Your goal is to write a high-quality document.
+            
+            IMPORTANT: Output in TWO parts:
+            1. First, output the document content directly in MARKDOWN format. This is for real-time preview.
+            2. Finally, output a JSON block at the very end wrapped in <STRUCTURE> tags.
+            
+            JSON Structure: {
+                "title": "Document Title",
+                "sections": [{"heading": "...", "content": "...", "level": 1}],
+                "style_guide": {...}
+            }
+            
+            The Markdown should be rich and detailed. The JSON must match the content.
+            """
+        elif doc_type == 'excel':
+            system_prompt = """You are a data analyst. 
+            1. First, output a Markdown TABLE representing the data.
+            2. Finally, output a JSON block wrapped in <STRUCTURE> tags.
+            
+            JSON Structure: {
+                "title": "Sheet Name",
+                "headers": ["Col1", "Col2"],
+                "rows": [["Val1", "Val2"]],
+                "formulas": {"A1": "=SUM(...)"}
+            }
+            """
+        else: # PPT
+            system_prompt = """You are a presentation designer.
+            1. First, output a Markdown list of slides with their titles and main points.
+            2. Finally, output a JSON block wrapped in <STRUCTURE> tags.
+            
+            JSON Structure: {
+                "title": "Presentation Title",
+                "slides": [{"type": "content", "title": "Slide Title", "content": ["point 1"]}]
+            }
+            """
+
+        full_messages = [{"role": "system", "content": system_prompt}]
+        if context:
+            full_messages.extend(context)
+        full_messages.append({"role": "user", "content": user_prompt})
+
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=full_messages,
+                stream=True
+            )
+            
+            async for chunk in response:
+                content = chunk.choices[0].delta.content
+                if content:
+                    yield content
+                    
+        except Exception as e:
+            logger.error(f"Structure stream failed: {str(e)}")
+            yield f"Error: {str(e)}"
     
     async def _generate_word_structure(
         self,
         user_prompt: str,
         style_guide: Optional[str] = None,
         client: Any = None,
-        model: str = None
+        model: str = None,
+        context: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, Any]:
         """Generate Word document structure."""
         
-        system_prompt = """You are a professional document writer. Generate a structured document based on the user's request.
-Output a JSON object with:
-- title: Document title
-- sections: Array of sections, each with:
-  - heading: Section heading (optional)
-  - content: Section text content
-  - level: Heading level (1-3)
-- style_guide: Optional formatting preferences extracted from the request (font_name, font_size, line_spacing, etc.)
+        system_prompt = """You are a professional document writer. Generate a structured document.
+        If context is provided, you are modifying an existing document.
+        Output a JSON object with: title, sections, style_guide.
+        Respond ONLY with valid JSON."""
 
-Parse any style requirements from the user's request (e.g., "12pt font", "1.5 line spacing", "Times New Roman").
-Respond ONLY with valid JSON, no markdown."""
+        try:
+            messages = [{"role": "system", "content": system_prompt}]
+            if context: messages.extend(context)
+            messages.append({"role": "user", "content": user_prompt})
+            
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            logger.error(f"LLM generation failed: {str(e)}")
+            raise Exception(f"Failed to generate Word document: {str(e)}")
 
-        if client:
-            try:
-                response = client.chat.completions.create(
-                    model=model or self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    response_format={"type": "json_object"}
-                )
-                return json.loads(response.choices[0].message.content)
-            except Exception as e:
-                logger.error("LLM generation failed", exc_info=False)
-                return self._mock_word_structure(user_prompt)
-        else:
-            return self._mock_word_structure(user_prompt)
     
-    async def _generate_excel_structure(self, user_prompt: str, client: Any = None, model: str = None) -> Dict[str, Any]:
+    async def _generate_excel_structure(self, user_prompt: str, client: Any = None, model: str = None, context: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """Generate Excel spreadsheet structure."""
         
-        system_prompt = """You are a data analyst. Generate structured spreadsheet data based on the user's request.
-Output a JSON object with:
-- title: Sheet title
-- headers: Array of column headers
-- rows: 2D array of data (each inner array is a row)
-- formulas: Optional dict of cell references to formulas (e.g., {"A10": "=SUM(A1:A9)"})
+        system_prompt = """You are a data analyst. Generate structured spreadsheet data.
+        If context is provided, you are modifying an existing sheet.
+        Output a JSON object with: title, headers, rows, formulas.
+        Respond ONLY with valid JSON."""
 
-Generate realistic sample data if specific data is not provided.
-Respond ONLY with valid JSON, no markdown."""
+        try:
+            messages = [{"role": "system", "content": system_prompt}]
+            if context: messages.extend(context)
+            messages.append({"role": "user", "content": user_prompt})
 
-        if client:
-            try:
-                response = client.chat.completions.create(
-                    model=model or self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    response_format={"type": "json_object"}
-                )
-                return json.loads(response.choices[0].message.content)
-            except Exception as e:
-                logger.error("LLM generation failed", exc_info=False)
-                return self._mock_excel_structure(user_prompt)
-        else:
-            return self._mock_excel_structure(user_prompt)
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            logger.error(f"LLM generation failed: {str(e)}")
+            raise Exception(f"Failed to generate Excel spreadsheet: {str(e)}")
+
     
-    async def _generate_ppt_structure(self, user_prompt: str, client: Any = None, model: str = None) -> Dict[str, Any]:
+    async def _generate_ppt_structure(self, user_prompt: str, client: Any = None, model: str = None, context: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """Generate PowerPoint presentation structure."""
         
-        system_prompt = """You are a presentation designer. Generate a structured presentation based on the user's request.
-Output a JSON object with:
-- title: Presentation title
-- subtitle: Optional subtitle
-- slides: Array of slide objects, each with:
-  - type: 'title', 'content', 'two_column', or 'image'
-  - title: Slide title
-  - content: Array of bullet points or text content
-  - notes: Optional speaker notes
+        system_prompt = """You are a presentation designer. Generate a structured presentation.
+        If context is provided, you are modifying an existing presentation.
+        Output a JSON object with: title, subtitle, slides.
+        Respond ONLY with valid JSON."""
 
-Create 5-10 slides for a comprehensive presentation.
-Respond ONLY with valid JSON, no markdown."""
+        try:
+            messages = [{"role": "system", "content": system_prompt}]
+            if context: messages.extend(context)
+            messages.append({"role": "user", "content": user_prompt})
 
-        if client:
-            try:
-                response = client.chat.completions.create(
-                    model=model or self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    response_format={"type": "json_object"}
-                )
-                return json.loads(response.choices[0].message.content)
-            except Exception as e:
-                logger.error("LLM generation failed", exc_info=False)
-                return self._mock_ppt_structure(user_prompt)
-        else:
-            return self._mock_ppt_structure(user_prompt)
-    
-    def _mock_word_structure(self, user_prompt: str) -> Dict[str, Any]:
-        """Generate mock Word structure when LLM is unavailable."""
-        # Parse style info from prompt
-        style_guide = self._parse_style_from_prompt(user_prompt)
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            logger.error(f"LLM generation failed: {str(e)}")
+            raise Exception(f"Failed to generate Presentation: {str(e)}")
+
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Have a conversation with the user to clarify document requirements.
         
-        return {
-            "title": "Generated Document",
-            "sections": [
-                {
-                    "heading": "Introduction",
-                    "content": f"This document was generated based on: {user_prompt}",
-                    "level": 1
-                },
-                {
-                    "heading": "Content",
-                    "content": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.",
-                    "level": 1
-                },
-                {
-                    "heading": "Conclusion",
-                    "content": "This concludes the document. Please provide an API key for AI-generated content.",
-                    "level": 1
-                }
-            ],
-            "style_guide": style_guide
-        }
-    
-    def _mock_excel_structure(self, user_prompt: str) -> Dict[str, Any]:
-        """Generate mock Excel structure when LLM is unavailable."""
-        return {
-            "title": "Data Sheet",
-            "headers": ["Name", "Value", "Category", "Date"],
-            "rows": [
-                ["Item 1", 100, "A", "2024-01-01"],
-                ["Item 2", 200, "B", "2024-01-02"],
-                ["Item 3", 150, "A", "2024-01-03"],
-                ["Item 4", 300, "C", "2024-01-04"],
-                ["Item 5", 250, "B", "2024-01-05"],
-            ],
-            "formulas": {
-                "B7": "=SUM(B2:B6)"
+        Returns:
+            - message: AI's response text
+            - ready_to_generate: True if AI thinks requirements are clear
+            - detected_type: Detected document type if ready
+            - summary: Summary of requirements if ready
+        """
+        client = await self._get_client(config)
+        model = self._get_model(config)
+        
+        system_prompt = """你是一个专业的文档助手。你的任务是帮助用户创建文档（Word、Excel 或 PPT）。
+
+在开始创建文档之前，你需要：
+1. 理解用户想要什么类型的文档
+2. 了解文档的主要内容 and 结构
+3. 确认任何特殊的格式或样式要求
+
+与用户对话时：
+- 用简洁友好的方式回复
+- 如果需求不清楚，提出具体问题
+- 当你认为已经充分了解需求时，在回复末尾添加标记 [READY]
+
+回复格式（JSON）：
+{
+    "message": "你的回复内容",
+    "ready_to_generate": true/false,
+    "detected_type": "word/excel/ppt" (仅当 ready_to_generate 为 true 时),
+    "summary": "需求摘要" (仅当 ready_to_generate 为 true 时)
+}
+
+始终用中文回复，除非用户用其他语言交流。"""
+
+        try:
+            full_messages = [{"role": "system", "content": system_prompt}] + messages
+            
+            response = await client.chat.completions.create(
+                model=model,
+                messages=full_messages,
+                response_format={"type": "json_object"}
+            )
+            
+            result = json.loads(response.choices[0].message.content)
+            return {
+                "message": result.get("message", ""),
+                "ready_to_generate": result.get("ready_to_generate", False),
+                "detected_type": result.get("detected_type"),
+                "summary": result.get("summary")
             }
-        }
-    
-    def _mock_ppt_structure(self, user_prompt: str) -> Dict[str, Any]:
-        """Generate mock PPT structure when LLM is unavailable."""
-        return {
-            "title": "Presentation",
-            "subtitle": f"Generated from: {user_prompt[:50]}...",
-            "slides": [
-                {
-                    "type": "title",
-                    "title": "Welcome",
-                    "content": ["AI Office Suite", "Powered by Advanced AI"]
-                },
-                {
-                    "type": "content",
-                    "title": "Overview",
-                    "content": [
-                        "Introduction to the topic",
-                        "Key points to discuss",
-                        "Benefits and features"
-                    ]
-                },
-                {
-                    "type": "content",
-                    "title": "Details",
-                    "content": [
-                        "First major point",
-                        "Second major point",
-                        "Third major point"
-                    ]
-                },
-                {
-                    "type": "content",
-                    "title": "Conclusion",
-                    "content": [
-                        "Summary of key points",
-                        "Next steps",
-                        "Thank you!"
-                    ]
-                }
-            ]
-        }
-    
-    def _parse_style_from_prompt(self, prompt: str) -> Dict[str, Any]:
-        """Extract style information from user prompt."""
-        style = {}
-        prompt_lower = prompt.lower()
-        
-        # Parse font size
-        size_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:pt|point|号)', prompt_lower)
-        if size_match:
-            style['font_size'] = float(size_match.group(1))
-        
-        # Parse line spacing
-        spacing_patterns = [
-            (r'(\d+(?:\.\d+)?)\s*倍行距', lambda m: float(m.group(1))),
-            (r'(\d+(?:\.\d+)?)\s*line\s*spacing', lambda m: float(m.group(1))),
-            (r'single\s*spac', lambda m: 1.0),
-            (r'double\s*spac', lambda m: 2.0),
-            (r'1\.5\s*spac', lambda m: 1.5),
-        ]
-        for pattern, extractor in spacing_patterns:
-            match = re.search(pattern, prompt_lower)
-            if match:
-                style['line_spacing'] = extractor(match)
-                break
-        
-        # Parse font name
-        font_patterns = [
-            r'(arial|times new roman|calibri|宋体|黑体|微软雅黑|楷体)',
-        ]
-        for pattern in font_patterns:
-            match = re.search(pattern, prompt_lower)
-            if match:
-                style['font_name'] = match.group(1).title()
-                break
-        
-        # Parse margins
-        margin_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:cm|厘米)\s*(?:margin|边距)', prompt_lower)
-        if margin_match:
-            style['margin'] = float(margin_match.group(1))
-        
-        return style
+            
+        except Exception as e:
+            logger.error(f"Chat failed: {str(e)}")
+            raise Exception(f"Chat failed: {str(e)}")
 
+    async def chat_stream(
+        self,
+        messages: List[Dict[str, str]],
+        config: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Streamed conversation with the AI.
+        """
+        client = await self._get_client(config)
+        model = self._get_model(config)
+        
+        system_prompt = """你是一个专业的文档助手。你的任务是帮助用户创建文档（Word、Excel 或 PPT）。
+请直接输出你的回复内容。如果你认为需求已经明确且准备好生成文档，请在回复的最末尾另起一行加上 [READY:type:summary]。
+其中 type 是 word/excel/ppt，summary 是需求简要描述。
+
+示例：
+好的，我已经了解了您的需求，将为您创建一份关于“公司年度总结”的报告。
+[READY:word:公司年度总结报告]
+
+始终用中文回复，除非用户用其他语言交流。"""
+
+        try:
+            full_messages = [{"role": "system", "content": system_prompt}] + messages
+            
+            response = await client.chat.completions.create(
+                model=model,
+                messages=full_messages,
+                stream=True
+            )
+            
+            async for chunk in response:
+                if chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+                    
+        except Exception as e:
+            logger.error(f"Chat stream failed: {str(e)}")
+            yield f"Error: {str(e)}"
+
+
+
+    async def _get_client(self, config: Optional[Dict[str, Any]] = None):
+        """Helper to get the appropriate client."""
+        if config:
+            api_key = config.get("api_key")
+            if api_key:
+                try:
+                    from openai import AsyncOpenAI
+                    return AsyncOpenAI(
+                        api_key=api_key,
+                        base_url=config.get("base_url") or "https://openrouter.ai/api/v1",
+                        default_headers={
+                            "HTTP-Referer": "http://localhost:5173",
+                            "X-Title": "AI Office Suite"
+                        }
+                    )
+                except ImportError:
+                    pass
+        
+        if not self.client:
+             raise ValueError("API Key not found. Please set OPENROUTER_API_KEY in .env or provide it in the request.")
+        return self.client
+
+
+    def _get_model(self, config: Optional[Dict[str, Any]] = None):
+        if config and config.get("model"):
+            return config.get("model")
+        return self.model
 
 # Global instance
 llm_service = LLMService()
+
 
